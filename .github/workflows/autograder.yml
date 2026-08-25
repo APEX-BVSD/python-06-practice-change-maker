@@ -1,0 +1,186 @@
+name: Apex Python Program I/O Autograder
+on: [push, pull_request, workflow_dispatch]
+
+env: 
+    PROGRAM_FILE: change_maker.py
+
+permissions:
+  contents: read
+  actions: read
+
+jobs: 
+    test:
+        name: "Test ${{ matrix.number }}: ${{ matrix.label }}"
+        runs-on: ubuntu-latest
+        timeout-minutes: 1
+    
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - number: 1
+                      label: 1.00 1.00
+                      inputs: [1, 1]
+                      expected: "Change: $0.00\nTwenty-dollar bills: 0\nTen-dollar bills: 0\nFive-dollar bills: 0\nOne-dollar bills: 0\nQuarters: 0\nDimes: 0\nNickels: 0\nPennies: 0"
+
+                    - number: 2
+                      label: 0.97 1.00
+                      inputs: [0.97, 1]
+                      expected: "Change: $0.03\nTwenty-dollar bills: 0\nTen-dollar bills: 0\nFive-dollar bills: 0\nOne-dollar bills: 0\nQuarters: 0\nDimes: 0\nNickels: 0\nPennies: 3"
+
+                    - number: 3
+                      label: 4.14 5.00
+                      inputs: [4.14, 5.00]
+                      expected: "Change: $0.86\nTwenty-dollar bills: 0\nTen-dollar bills: 0\nFive-dollar bills: 0\nOne-dollar bills: 0\nQuarters: 3\nDimes: 1\nNickels: 0\nPennies: 1"
+
+                    - number: 4
+                      label: 24.00 50.00
+                      inputs: [24, 50]
+                      expected: "Change: $26.00\nTwenty-dollar bills: 1\nTen-dollar bills: 0\nFive-dollar bills: 1\nOne-dollar bills: 1\nQuarters: 0\nDimes: 0\nNickels: 0\nPennies: 0"
+
+                    - number: 5
+                      label: 63.59 100.00
+                      inputs: [63.59, 100.00]
+                      expected: "Change: $36.41\nTwenty-dollar bills: 1\nTen-dollar bills: 1\nFive-dollar bills: 1\nOne-dollar bills: 1\nQuarters: 1\nDimes: 1\nNickels: 1\nPennies: 1"
+
+                    - number: 6
+                      label: 36.74 100.00
+                      inputs: [36.74, 100.00]
+                      expected: "Change: $63.26\nTwenty-dollar bills: 3\nTen-dollar bills: 0\nFive-dollar bills: 0\nOne-dollar bills: 3\nQuarters: 1\nDimes: 0\nNickels: 0\nPennies: 1"
+
+                    - number: 7
+                      label: 0.30 0.50
+                      inputs: [0.3, 0.5]
+                      expected: "Change: $0.20\nTwenty-dollar bills: 0\nTen-dollar bills: 0\nFive-dollar bills: 0\nOne-dollar bills: 0\nQuarters: 0\nDimes: 2\nNickels: 0\nPennies: 0"
+
+                    - number: 8
+                      label: 0 amount due
+                      inputs: [0.00, 10.00]
+                      expected: "The amount due must be greater than $0.00."
+
+                    - number: 9
+                      label: 0 amount paid
+                      inputs: [10.00, 0.00]
+                      expected: "The amount paid must be greater than $0.00."
+
+                    - number: 10
+                      label: Amount paid less than amount due
+                      inputs: [8.75, 8.50]
+                      expected: "The amount paid must be greater than the amount due."
+
+        steps:
+            - uses: actions/checkout@v6
+
+            - name: Run test
+              shell: bash
+              env:
+                TEST_NUMBER: "${{ matrix.number }}"
+                TEST_LABEL: "${{ matrix.label }}"
+                TEST_INPUTS: "${{ toJSON(matrix.inputs) }}"
+                EXPECTED_OUTPUT: "${{ matrix.expected }}"
+            
+              # script to run program with name and capture output
+              run: |
+                python3 - <<'PY'
+                import json
+                import os
+                import subprocess
+                import sys
+
+                def run_program(program_file, inputs):
+                    user_input = "\n".join(str(value) for value in inputs) + "\n"
+                    return subprocess.run(
+                        [sys.executable, program_file],
+                        input=user_input,
+                        text=True,
+                        capture_output=True,
+                        timeout=5,
+                    )
+
+                def print_report(number, label, inputs, expected, actual, passed):
+                    shown_inputs = ", ".join(str(value) for value in inputs)
+                    result_text = "✅ PASS" if passed else "❌ FAIL"
+                    horiz_line: str = "-" * 50
+                    print(horiz_line)
+                    print(f"Test {number}: {label}")
+                    print(result_text)
+                    print(f"Inputs: [{shown_inputs}]")
+                    print(f"Expected: '{expected}'")
+                    print(f"  Actual: '{actual}'")
+                    print(horiz_line)
+
+                def main():
+                    # retrieve environment variables
+                    number = os.environ["TEST_NUMBER"]
+                    label = os.environ["TEST_LABEL"]
+                    inputs = json.loads(os.environ["TEST_INPUTS"])
+                    program_file = os.environ["PROGRAM_FILE"]
+                    expected = os.environ["EXPECTED_OUTPUT"]
+
+                    try:
+                        result = run_program(program_file, inputs)
+
+                    except FileNotFoundError:
+                        actual = f"{program_file} was not found"
+                        print_report(
+                            number, label, inputs, expected, actual, False
+                        )
+                        return 1
+
+                    except subprocess.TimeoutExpired:
+                        actual = "Program did not finish within 5 seconds"
+                        print_report(
+                            number, label, inputs, expected, actual, False
+                        )
+                        return 1
+
+                    output = result.stdout.replace("\r\n", "\n").removesuffix("\n")
+                    output_matches = output.endswith(expected)
+                    passed = result.returncode == 0 and output_matches
+                    actual = expected if output_matches else output
+
+                    print_report(
+                        number, label, inputs, expected, actual, passed
+                    )
+
+                    if not passed and result.stderr:
+                        print(f"Error output: {result.stderr!r}")
+
+                    return 0 if passed else 1
+
+                if __name__ == "__main__":
+                    sys.exit(main())
+                PY
+    summary:
+        name: Test Summary
+        needs: test
+        if: always()
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Summarize Test Runs 
+              uses: actions/github-script@v8
+              with:
+                script: |
+                    const jobs = await github.paginate(
+                        github.rest.actions.listJobsForWorkflowRun,
+                        {
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            run_id: context.runId,
+                            per_page: 100,
+                        }
+                    );
+
+                    const tests = jobs.filter(
+                        job => /^Test \d+:/.test(job.name)
+                    );
+                    const passed = tests.filter(
+                    job => job.conclusion === "success"
+                    ).length;
+                    const failed = tests.length - passed;
+                    const result =
+                        `${passed}/${tests.length} tests passed; ${failed} failed.`;
+
+                    core.notice(result, { title: "Autograding result" });
